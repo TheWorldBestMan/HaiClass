@@ -1,0 +1,39 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="6dp"
+    android:paddingEnd="10dp">
+
+    <CheckBox
+        android:id="@+id/run_widget_morning"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:buttonTint="@color/ocean_blue"
+        android:gravity="center_vertical"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="@string/run_morning"
+        android:textColor="@color/blue_ink"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <CheckBox
+        android:id="@+id/run_widget_afternoon"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:buttonTint="@color/ocean_blue"
+        android:gravity="center_vertical"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="@string/run_afternoon"
+        android:textColor="@color/blue_ink"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <include layout="@layout/campus_run_widget_progress" />
+</LinearLayout>

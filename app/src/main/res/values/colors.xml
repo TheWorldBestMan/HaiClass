@@ -1,0 +1,10 @@
+<resources>
+    <color name="sky_background">#F3F7FF</color>
+    <color name="ocean_blue">#205CCC</color>
+    <color name="blue_ink">#13284B</color>
+    <color name="blue_secondary">#385985</color>
+    <color name="widget_cell_fill">#E8F1FF</color>
+    <color name="widget_cell_stroke">#DAE8FC</color>
+    <color name="widget_top">#FFFFFF</color>
+    <color name="widget_bottom">#EEF5FF</color>
+</resources>

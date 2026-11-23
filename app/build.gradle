@@ -1,0 +1,25 @@
+plugins {
+    id 'com.android.application' version '8.12.3'
+}
+
+android {
+    namespace 'cn.haike.schedule'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'cn.haike.schedule'
+        minSdk 26
+        targetSdk 35
+        versionCode 12
+        versionName '0.13'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+}

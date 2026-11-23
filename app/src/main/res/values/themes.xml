@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.HaiClass" parent="Theme.HaiClass.Base" />
+
+    <style name="Theme.HaiClass.Base" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/ocean_blue</item>
+        <item name="android:windowBackground">@color/sky_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

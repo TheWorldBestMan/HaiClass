@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">海课</string>
+    <string name="widget_name">海课 · 七天课表</string>
+    <string name="widget_description">桌面日历，查看从今天起七天的课程、起止时间、节次和上课地点</string>
+    <string name="run_widget_name">海课 · 校园跑</string>
+    <string name="run_widget_description">记录当天的校园跑完成状态和累计进度</string>
+    <string name="run_widget_title">校园跑</string>
+    <string name="run_morning">上午</string>
+    <string name="run_afternoon">下午</string>
+    <string name="run_morning_completed">上午已跑步</string>
+    <string name="run_afternoon_completed">下午已跑步</string>
+    <string name="run_checked">%1$s，已勾选</string>
+    <string name="run_unchecked">%1$s，未勾选</string>
+    <string name="run_channel">校园跑提醒</string>
+    <string name="run_progress_short">校园跑 %1$d/%2$d</string>
+    <string name="run_progress_detail">已累计 %1$d 次，目标 %2$d 次</string>
+    <string name="run_remaining">还差 %1$d 次</string>
+    <string name="run_goal_status">已达标</string>
+    <string name="run_goal_reached">已达标，校园跑提醒已停止。</string>
+    <string name="run_edit_count">修改累计次数</string>
+    <string name="run_edit_count_hint">累计次数</string>
+    <string name="run_edit_count_help">填写当前累计总数，包含今天已勾选的 %1$d 次。</string>
+    <string name="run_edit_count_invalid">请输入有效的非负整数</string>
+    <string name="run_edit_count_minimum">累计次数至少为今天已勾选的 %1$d 次</string>
+    <string name="run_widget_status">%1$s ›</string>
+    <string name="run_widget_summary">校园跑，%1$s。%2$s。点按修改累计次数。</string>
+</resources>

@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.HaiClass" parent="Theme.HaiClass.Base">
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>
