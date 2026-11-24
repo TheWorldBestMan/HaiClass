@@ -48,12 +48,14 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 public final class MainActivity extends Activity {
+    private static final int STUDY_TAB = 3;
     private static final int DOCUMENT = 10, NOTIFY = 11;
     private static final int MATCH = -1, WRAP = -2;
     private static final int GROUND = 0xfff3f7ff, PAPER = Color.WHITE, INK = 0xff13284b;
@@ -72,6 +74,8 @@ public final class MainActivity extends Activity {
     private final Runnable clock = new Runnable() {
         @Override public void run() {
             if (!Timetable.today().equals(today)) {
+                render(true);
+            } else if (tab == STUDY_TAB) {
                 render(true);
             } else if (tab == 0) {
                 refreshHero();
@@ -110,6 +114,7 @@ public final class MainActivity extends Activity {
             if (pending != null) importedUri = Uri.parse(pending);
         } else if (ScheduleWidget.OPEN_DAY.equals(getIntent().getAction())
             || WeatherAlerts.OPEN_WEATHER.equals(getIntent().getAction())
+            || StudyItems.OPEN.equals(getIntent().getAction())
             || CampusRun.opensSettings(getIntent())) {
             selectLinkedDay(getIntent());
         }
@@ -121,6 +126,7 @@ public final class MainActivity extends Activity {
             if (saved == null) showLinkedCourse(getIntent());
             if (saved == null && WeatherAlerts.OPEN_WEATHER.equals(getIntent().getAction())) showNotificationWeather(getIntent());
             if (saved == null) openLinkedCampusRun(getIntent());
+            if (saved == null) showLinkedStudy(getIntent());
         }
     }
 
@@ -142,30 +148,34 @@ public final class MainActivity extends Activity {
             showLinkedCourse(intent);
             if (WeatherAlerts.OPEN_WEATHER.equals(intent.getAction())) showNotificationWeather(intent);
             openLinkedCampusRun(intent);
+            showLinkedStudy(intent);
         }
     }
 
     private void selectLinkedDay(Intent intent) {
-        tab = CampusRun.opensSettings(intent) ? 2 : 0;
+        tab = StudyItems.OPEN.equals(intent.getAction()) ? STUDY_TAB : CampusRun.opensSettings(intent) ? 2 : 0;
         LocalDate now = Timetable.today();
         long requested = intent.getLongExtra(ScheduleWidget.DATE, now.toEpochDay());
-        long lastVisible = Math.max(now.plusDays(6).toEpochDay(), table.lastDay().toEpochDay());
-        if (requested < now.minusDays(1).toEpochDay() || requested > lastVisible) requested = now.toEpochDay();
+        if (requested < LocalDate.of(1900, 1, 1).toEpochDay() || requested > LocalDate.of(2100, 12, 31).toEpochDay()) {
+            requested = now.toEpochDay();
+        }
         selected = LocalDate.ofEpochDay(requested);
         week = Timetable.monday(selected);
     }
 
     private void showLinkedCourse(Intent intent) {
         if (!ScheduleWidget.OPEN_DAY.equals(intent.getAction()) || !intent.hasExtra(CourseNotifications.COURSE_TIME)) return;
-        Timetable.Meeting meeting = findMeeting(intent.getLongExtra(CourseNotifications.COURSE_TIME, -1),
-            intent.getStringExtra(CourseNotifications.COURSE_NAME));
+        Timetable.Meeting meeting = findMeeting(intent, CourseNotifications.COURSE_TIME, CourseNotifications.COURSE_NAME);
         if (meeting != null) showLiveCourseDetails(meeting);
     }
 
-    private Timetable.Meeting findMeeting(long start, String name) {
-        if (start < 0 || name == null) return null;
+    private Timetable.Meeting findMeeting(Intent intent, String timeKey, String nameKey) {
+        long start = intent.getLongExtra(timeKey, Long.MIN_VALUE);
+        if (start == Long.MIN_VALUE) return null;
+        String id = intent.getStringExtra(CourseNotifications.COURSE_ID);
+        if (id != null) return table.find(start, id, periods);
+        String name = intent.getStringExtra(nameKey);
         LocalDate date = Timetable.onDate(start);
-        if (date.isBefore(table.start) || date.isAfter(table.lastDay())) return null;
         for (Timetable.Meeting meeting : table.on(date, periods)) {
             if (meeting.startsAt() == start && meeting.course().name().equals(name)) return meeting;
         }
@@ -175,7 +185,7 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         ScheduleAlarm.refresh(this);
-        if (tab == 2 || !Timetable.today().equals(today)) render(true);
+        if (tab == 2 || tab == STUDY_TAB || !Timetable.today().equals(today)) render(true);
         else if (tab == 0) refreshHero();
         if (weatherSlot != null) loadWeather(false);
         handler.postDelayed(clock, 30_000);
@@ -274,28 +284,28 @@ public final class MainActivity extends Activity {
         switch (tab) {
             case 1 -> drawWeek();
             case 2 -> drawSettings();
+            case STUDY_TAB -> drawStudy();
             default -> drawToday();
         }
         scroll.post(() -> scroll.scrollTo(0, offset));
     }
 
     private void drawNavigation() {
-        String[] titles = {"日课表", "一周课表", "上课设置"};
-        int[] icons = {R.drawable.ic_nav_day, R.drawable.ic_nav_week, R.drawable.ic_nav_settings};
-        for (int i = 0; i < titles.length; i++) {
-            int index = i;
+        String[] titles = {"日课表", "一周课表", "上课设置", "学业"};
+        int[] icons = {R.drawable.ic_nav_day, R.drawable.ic_nav_week, R.drawable.ic_nav_settings, R.drawable.ic_nav_study};
+        for (int index : new int[]{0, 1, STUDY_TAB, 2}) {
             LinearLayout item = column();
             item.setGravity(Gravity.CENTER);
-            item.setContentDescription(titles[i]);
-            item.setSelected(tab == i);
-            int color = tab == i ? DEEP : MUTED;
+            item.setContentDescription(titles[index]);
+            item.setSelected(tab == index);
+            int color = tab == index ? DEEP : MUTED;
             ImageView symbol = new ImageView(this);
-            symbol.setImageResource(icons[i]);
+            symbol.setImageResource(icons[index]);
             symbol.setImageTintList(ColorStateList.valueOf(color));
             symbol.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-            if (tab == i) symbol.setBackground(shape(PALE_BLUE, 12));
+            if (tab == index) symbol.setBackground(shape(PALE_BLUE, 12));
             item.addView(symbol, size(44, 28));
-            TextView caption = text(titles[i], 12, color, tab == i);
+            TextView caption = text(titles[index], 12, color, tab == index);
             caption.setGravity(Gravity.CENTER);
             item.addView(caption);
             item.setOnClickListener(v -> { tab = index; render(false); });
@@ -354,7 +364,9 @@ public final class MainActivity extends Activity {
         String shown = Timetable.dateLabel(selected) + " " + Timetable.weekday(selected);
         add(agenda, text(shown + "  ·  " + meetings.size() + " 堂", 14, MUTED, true), 0, 7);
         drawMeetings(agenda, meetings);
+        add(agenda, action("添加一次补课", PALE_BLUE, BLUE, () -> editAdjustment(null)), 8, 0, 42);
         add(body, agenda, 0, 13);
+        drawStudyAgenda();
 
         LinearLayout widget = card();
         widget.addView(text("桌面小组件", 18, INK, true));
@@ -525,12 +537,12 @@ public final class MainActivity extends Activity {
     }
 
     private void showNotificationWeather(Intent intent) {
-        Timetable.Meeting meeting = findMeeting(intent.getLongExtra(WeatherAlerts.CLASS_START, -1),
-            intent.getStringExtra(WeatherAlerts.CLASS_NAME));
+        Timetable.Meeting meeting = findMeeting(intent, WeatherAlerts.CLASS_START, WeatherAlerts.CLASS_NAME);
         if (meeting != null) {
             showClassWeather(meeting);
             return;
         }
+        if (intent.hasExtra(WeatherAlerts.CLASS_START)) return;
         String name = intent.getStringExtra(WeatherAlerts.WEATHER_CAMPUS);
         for (WeatherForecast.Campus campus : WeatherForecast.Campus.values()) {
             if (campus.name().equals(name)) {
@@ -712,8 +724,9 @@ public final class MainActivity extends Activity {
             + "\n\n" + course.campus() + "  " + course.roomLabel()
             + (course.teacher().isEmpty() ? "" : "\n教师  " + course.teacher())
             + (course.type().isEmpty() ? "" : "\n课型  " + course.type())
-            + "\n上课周  " + Timetable.weekText(course.weeks());
-        new AlertDialog.Builder(this).setTitle(course.name()).setMessage(info.trim()).setPositiveButton("完成", null).show();
+            + (course.weeks() == 0 ? "" : "\n上课周  " + Timetable.weekText(course.weeks()));
+        new AlertDialog.Builder(this).setTitle(course.name()).setMessage(info.trim()).setPositiveButton("完成", null)
+            .setNeutralButton("临时调整", (dialog, which) -> showAdjustmentActions(meeting)).show();
     }
 
     private void showLiveCourseDetails(Timetable.Meeting meeting) {
@@ -732,7 +745,7 @@ public final class MainActivity extends Activity {
             16, INK, true), 0, 4);
         if (!course.teacher().isEmpty()) add(detail, text("教师  " + course.teacher(), 14, MUTED, false), 0, 4);
         if (!course.type().isEmpty()) add(detail, text("课型  " + course.type(), 14, MUTED, false), 0, 4);
-        add(detail, text("上课周  " + Timetable.weekText(course.weeks()), 14, MUTED, false), 0, 6);
+        if (course.weeks() != 0) add(detail, text("上课周  " + Timetable.weekText(course.weeks()), 14, MUTED, false), 0, 6);
 
         if (WeatherAlerts.enabled(this, WeatherAlerts.Feature.LIVE)) {
             long now = System.currentTimeMillis();
@@ -751,7 +764,8 @@ public final class MainActivity extends Activity {
         }
         ScrollView content = new ScrollView(this);
         content.addView(detail, new ScrollView.LayoutParams(MATCH, WRAP));
-        AlertDialog dialog = showWideDetails(new AlertDialog.Builder(this).setView(content).setPositiveButton("完成", null));
+        AlertDialog dialog = showWideDetails(new AlertDialog.Builder(this).setView(content).setPositiveButton("完成", null)
+            .setNeutralButton("临时调整", (dismissed, which) -> showAdjustmentActions(meeting)));
         if (countdown != null) {
             dialog.setOnDismissListener(dismissed -> countdown.stop());
             countdown.start();
@@ -774,6 +788,310 @@ public final class MainActivity extends Activity {
         });
         add(detail, countdown, 0, 10);
         return countdown;
+    }
+
+    private void showAdjustmentActions(Timetable.Meeting meeting) {
+        Timetable.Adjustment current = table.adjustment(meeting.id());
+        boolean supplemental = current != null && current.source() == null;
+        String[] choices = supplemental ? new String[]{"编辑补课", "删除这次补课"} : current == null
+            ? new String[]{"调课", "停课"} : new String[]{"调课", "停课", "撤销临时调整"};
+        new AlertDialog.Builder(this).setTitle("这一次课程").setItems(choices, (dialog, selected) -> {
+            if (selected == 0) editAdjustment(meeting);
+            else if (selected == 2 || supplemental) confirmUndoAdjustment(current);
+            else {
+                LocalDate source = current == null ? meeting.date() : current.source();
+                new AlertDialog.Builder(this).setTitle("停掉这一次课程？")
+                    .setMessage(meeting.course().name() + " · " + meeting.date() + " " + meeting.times())
+                    .setNegativeButton("取消", null).setPositiveButton("确认停课", (confirm, which) ->
+                        saveAdjustment(meeting.id(), new Timetable.Adjustment(source, meeting, true), meeting.date()))
+                    .show();
+            }
+        }).setNegativeButton("关闭", null).show();
+    }
+
+    private void editAdjustment(Timetable.Meeting original) {
+        Timetable.Adjustment current = original == null ? null : table.adjustment(original.id());
+        boolean supplemental = original == null || (current != null && current.source() == null);
+        Timetable.Course course = original == null ? null : original.course();
+        LocalDate[] day = {original == null ? selected : original.date()};
+        int[] times = {original == null ? 8 * 60 + 10 : original.start(), original == null ? 8 * 60 + 55 : original.end()};
+        LinearLayout fields = dialogFields();
+        EditText name = formText(fields, "课程名称", course == null ? "" : course.name(), false);
+        name.setEnabled(supplemental);
+        addDateField(fields, "上课日期", day);
+        addTimeField(fields, "开始时间", times, 0);
+        addTimeField(fields, "结束时间", times, 1);
+        EditText campus = formText(fields, "校区", course == null ? "" : course.campus(), false);
+        EditText room = formText(fields, "地点", course == null ? "" : course.room(), false);
+        ScrollView content = new ScrollView(this);
+        content.addView(fields);
+        AlertDialog editor = new AlertDialog.Builder(this).setTitle(supplemental ? "补课安排" : "调课")
+            .setView(content).setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+        editor.show();
+        editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            if (value(name).isEmpty()) { name.setError("请填写课程名称"); return; }
+            if (times[0] >= times[1]) { toast("结束时间须晚于开始时间"); return; }
+            String id = original == null ? UUID.randomUUID().toString() : original.id();
+            Timetable.Course updated = new Timetable.Course(value(name), day[0].getDayOfWeek().getValue(),
+                0, 0, course == null ? 0 : course.weeks(),
+                value(campus), value(room), course == null ? "" : course.teacher(), course == null ? "" : course.type());
+            Timetable.Meeting changed = new Timetable.Meeting(updated, day[0], times[0], times[1], id);
+            LocalDate source = supplemental ? null : current == null ? original.date() : current.source();
+            Runnable save = () -> {
+                if (saveAdjustment(id, new Timetable.Adjustment(source, changed, false), changed.date())) editor.dismiss();
+            };
+            boolean overlaps = table.on(day[0], periods).stream().anyMatch(meeting ->
+                !id.equals(meeting.id()) && meeting.start() < times[1] && times[0] < meeting.end());
+            if (overlaps) {
+                new AlertDialog.Builder(this).setTitle("上课时间有重叠")
+                    .setMessage("这段时间已有课程安排。").setNegativeButton("继续编辑", null)
+                    .setPositiveButton("仍然保存", (dialog, which) -> save.run()).show();
+            } else save.run();
+        });
+    }
+
+    private boolean saveAdjustment(String id, Timetable.Adjustment adjustment, LocalDate day) {
+        Timetable updated = table.withAdjustment(id, adjustment);
+        if (!ScheduleStore.save(this, updated)) { toast("保存失败，请重试"); return false; }
+        table = updated;
+        if (day != null) {
+            selected = day;
+            week = Timetable.monday(day);
+            tab = 0;
+        }
+        ScheduleAlarm.refresh(this);
+        render(day == null);
+        toast(adjustment == null ? "已撤销临时调整" : "已保存" + adjustment.label());
+        return true;
+    }
+
+    private void confirmUndoAdjustment(Timetable.Adjustment adjustment) {
+        if (adjustment == null) return;
+        new AlertDialog.Builder(this).setTitle(adjustment.source() == null ? "删除这次补课？" : "撤销这次调整？")
+            .setMessage(adjustment.meeting().course().name()).setNegativeButton("返回", null)
+            .setPositiveButton("确认", (dialog, which) -> saveAdjustment(adjustment.meeting().id(), null, null)).show();
+    }
+
+    private void showAdjustments() {
+        List<Timetable.Adjustment> changes = new ArrayList<>(table.adjustments);
+        changes.sort(java.util.Comparator.comparing(change -> change.meeting().date()));
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("临时调整").setNegativeButton("关闭", null);
+        if (changes.isEmpty()) dialog.setMessage("当前课表还没有临时调整");
+        else {
+            String[] labels = changes.stream().map(change -> change.label() + " · " + change.meeting().course().name()
+                + "\n" + change.meeting().date() + " " + change.meeting().times()).toArray(String[]::new);
+            dialog.setItems(labels, (view, index) -> confirmUndoAdjustment(changes.get(index)));
+        }
+        dialog.show();
+    }
+
+    private void restoreTimetable() {
+        Timetable previous = ScheduleStore.previous(this);
+        if (previous == null) return;
+        new AlertDialog.Builder(this).setTitle("恢复上一次课表")
+            .setMessage(previous.term + "\n第 1 周从 " + previous.start + " 开始")
+            .setNegativeButton("取消", null).setPositiveButton("恢复", (dialog, which) -> {
+                if (!ScheduleStore.replace(this, previous, table)) { toast("恢复失败，请重试"); return; }
+                table = previous;
+                selected = today;
+                week = Timetable.monday(today);
+                tab = 0;
+                ScheduleAlarm.refresh(this);
+                render(false);
+                toast("已恢复上一次课表");
+            }).show();
+    }
+
+    private LinearLayout dialogFields() {
+        LinearLayout fields = column();
+        pad(fields, 22, 6, 22, 12);
+        fields.setFocusableInTouchMode(true);
+        return fields;
+    }
+
+    private EditText formText(LinearLayout fields, String label, String current, boolean multiline) {
+        add(fields, text(label, 13, MUTED, true), 9, 0);
+        EditText input = new EditText(this);
+        input.setSingleLine(!multiline);
+        input.setHint(label);
+        input.setContentDescription(label);
+        input.setText(current);
+        add(fields, input, 0, 0);
+        return input;
+    }
+
+    private static String value(EditText input) { return input.getText().toString().trim(); }
+
+    private void addDateField(LinearLayout fields, String label, LocalDate[] day) {
+        add(fields, text(label, 13, MUTED, true), 9, 3);
+        TextView button = action(day[0].toString(), PALE_BLUE, BLUE, () -> {});
+        button.setContentDescription(label + " " + day[0]);
+        button.setOnClickListener(view -> new DatePickerDialog(this, (picker, year, month, date) -> {
+            day[0] = LocalDate.of(year, month + 1, date);
+            button.setText(day[0].toString());
+            button.setContentDescription(label + " " + day[0]);
+        }, day[0].getYear(), day[0].getMonthValue() - 1, day[0].getDayOfMonth()).show());
+        add(fields, button, 0, 0, 42);
+    }
+
+    private void addTimeField(LinearLayout fields, String label, int[] times, int index) {
+        add(fields, text(label, 13, MUTED, true), 9, 3);
+        TextView button = action(Timetable.clock(times[index]), PALE_BLUE, BLUE, () -> {});
+        button.setContentDescription(label + " " + Timetable.clock(times[index]));
+        button.setOnClickListener(view -> new TimePickerDialog(this, (picker, hour, minute) -> {
+            times[index] = hour * 60 + minute;
+            button.setText(Timetable.clock(times[index]));
+            button.setContentDescription(label + " " + Timetable.clock(times[index]));
+        }, times[index] / 60, times[index] % 60, true).show());
+        add(fields, button, 0, 0, 42);
+    }
+
+    private static final int[] STUDY_LEADS = {-1, 0, 30, 60, 1440};
+    private static final String[] STUDY_LEAD_LABELS = {"关闭提醒", "到时提醒", "提前 30 分钟", "提前 1 小时", "提前 1 天"};
+
+    private void drawStudy() {
+        heading("作业与考试", "学业");
+        LinearLayout actions = row();
+        TextView homework = action("添加作业", DEEP, PAPER, () -> editStudy(null, false, today));
+        LinearLayout.LayoutParams first = new LinearLayout.LayoutParams(0, dp(45), 1);
+        first.rightMargin = dp(8);
+        actions.addView(homework, first);
+        actions.addView(action("添加考试", PALE_BLUE, DEEP, () -> editStudy(null, true, today)),
+            new LinearLayout.LayoutParams(0, dp(45), 1));
+        add(body, actions, 0, 10);
+        if (!ScheduleAlarm.notificationsAllowed(this, StudyItems.CHANNEL)) {
+            add(body, action("允许学业通知", PALE_BLUE, BLUE, () -> requestNotifications(StudyItems.CHANNEL)), 0, 8, 41);
+        } else if (!ScheduleAlarm.exact(this)) {
+            add(body, text("开启准时提醒后可减少通知延迟", 13, MUTED, false), 0, 3);
+            add(body, action("开启准时提醒", PALE_BLUE, BLUE, this::exactSettings), 0, 8, 41);
+        }
+        List<StudyItems.Item> items = StudyItems.load(this);
+        drawStudyGroup("待办", items, false);
+        drawStudyGroup("已完成", items, true);
+    }
+
+    private void drawStudyGroup(String title, List<StudyItems.Item> items, boolean done) {
+        LinearLayout group = card();
+        add(group, text(title, 18, INK, true), 0, 6);
+        boolean empty = true;
+        for (StudyItems.Item item : items) {
+            if (item.done() != done) continue;
+            drawStudyItem(group, item);
+            empty = false;
+        }
+        if (empty) add(group, text(done ? "还没有已完成事项" : "当前没有待办", 14, MUTED, false), 1, 2);
+        add(body, group, 0, 10);
+    }
+
+    private void drawStudyAgenda() {
+        LinearLayout group = card();
+        List<StudyItems.Item> items = StudyItems.load(this);
+        add(group, text("学业事项", 18, INK, true), 0, 6);
+        boolean empty = true;
+        for (StudyItems.Item item : items) {
+            if (!item.date().equals(selected)) continue;
+            drawStudyItem(group, item);
+            empty = false;
+        }
+        if (empty) add(group, text("这一天没有作业或考试安排", 14, MUTED, false), 1, 5);
+        add(group, action("管理作业与考试", PALE_BLUE, BLUE, () -> { tab = STUDY_TAB; render(false); }), 6, 0, 42);
+        add(body, group, 0, 13);
+    }
+
+    private void drawStudyItem(LinearLayout group, StudyItems.Item item) {
+        LinearLayout itemView = column();
+        itemView.setBackground(shape(GROUND, 12));
+        pad(itemView, 10, 9, 10, 9);
+        add(itemView, text(item.type() + " · " + item.title(), 16, INK, true), 0, 4);
+        add(itemView, text(item.timeLabel() + " · " + studyStatus(item)
+            + (item.course().isEmpty() ? "" : " · " + item.course()), 13, MUTED, false), 0, 0);
+        itemView.setFocusable(true);
+        itemView.setOnClickListener(view -> showStudyItem(item));
+        add(group, itemView, 2, 5);
+    }
+
+    private static String studyStatus(StudyItems.Item item) {
+        if (item.done()) return "已完成";
+        long left = item.due() - System.currentTimeMillis();
+        if (left <= 0) return item.exam() ? "已到开考时间" : "已逾期";
+        if (!item.exam()) return "待完成";
+        long hours = left / 3_600_000;
+        if (hours >= 24) return "距考试 " + hours / 24 + " 天" + (hours % 24 == 0 ? "" : " " + hours % 24 + " 小时");
+        return left < 3_600_000 ? "距考试不足 1 小时" : "距考试 " + hours + " 小时";
+    }
+
+    private void showLinkedStudy(Intent intent) {
+        if (!StudyItems.OPEN.equals(intent.getAction())) return;
+        String id = intent.getStringExtra(StudyItems.ITEM_ID);
+        for (StudyItems.Item item : StudyItems.load(this)) {
+            if (item.id().equals(id)) { showStudyItem(item); return; }
+        }
+    }
+
+    private void showStudyItem(StudyItems.Item item) {
+        LinearLayout detail = dialogFields();
+        add(detail, text(item.type() + " · " + studyStatus(item), 14, DEEP, true), 2, 7);
+        add(detail, text(item.timeLabel() + " · 北京时间", 17, INK, true), 0, 6);
+        if (!item.course().isEmpty()) add(detail, text("课程  " + item.course(), 14, MUTED, false), 0, 5);
+        if (!item.place().isEmpty()) add(detail, text("地点  " + item.place(), 14, MUTED, false), 0, 5);
+        if (!item.notes().isEmpty()) add(detail, text(item.notes(), 14, INK, false), 0, 5);
+        ScrollView content = new ScrollView(this);
+        content.addView(detail);
+        showWideDetails(new AlertDialog.Builder(this).setTitle(item.title()).setView(content).setNegativeButton("关闭", null)
+            .setNeutralButton("编辑", (dialog, which) -> editStudy(item, item.exam(), item.date()))
+            .setPositiveButton(item.done() ? "恢复待办" : "标记完成",
+                (dialog, which) -> saveStudy(item.id(), item.withDone(!item.done()))));
+    }
+
+    private void editStudy(StudyItems.Item old, boolean exam, LocalDate initialDate) {
+        LocalDate[] date = {initialDate};
+        int[] time = {old == null ? exam ? 9 * 60 : 1439 : old.minute()};
+        int[] leadIndex = {exam ? 3 : 4};
+        if (old != null) {
+            for (int i = 0; i < STUDY_LEADS.length; i++) if (old.lead() == STUDY_LEADS[i]) leadIndex[0] = i;
+        }
+        LinearLayout form = dialogFields();
+        EditText title = formText(form, "标题", old == null ? "" : old.title(), false);
+        addDateField(form, exam ? "考试日期" : "截止日期", date);
+        addTimeField(form, exam ? "开考时间" : "截止时间", time, 0);
+        add(form, text("提醒", 13, MUTED, true), 9, 3);
+        TextView lead = action(STUDY_LEAD_LABELS[leadIndex[0]], PALE_BLUE, BLUE, () -> {});
+        lead.setOnClickListener(view -> new AlertDialog.Builder(this).setTitle("提醒时间")
+            .setSingleChoiceItems(STUDY_LEAD_LABELS, leadIndex[0], (dialog, index) -> {
+                leadIndex[0] = index;
+                lead.setText(STUDY_LEAD_LABELS[index]);
+                lead.setContentDescription(STUDY_LEAD_LABELS[index]);
+                dialog.dismiss();
+            }).setNegativeButton("取消", null).show());
+        add(form, lead, 0, 2, 42);
+        EditText course = formText(form, "课程（选填）", old == null ? "" : old.course(), false);
+        EditText place = formText(form, "地点（选填）", old == null ? "" : old.place(), false);
+        EditText notes = formText(form, "备注（选填）", old == null ? "" : old.notes(), true);
+        ScrollView content = new ScrollView(this);
+        content.addView(form);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle((old == null ? "添加" : "编辑") + (exam ? "考试" : "作业"))
+            .setView(content).setNegativeButton("取消", null).setPositiveButton("保存", null);
+        if (old != null) builder.setNeutralButton("删除", (dialog, which) -> new AlertDialog.Builder(this)
+            .setTitle("删除这项" + old.type() + "？").setMessage(old.title()).setNegativeButton("取消", null)
+            .setPositiveButton("删除", (confirm, choice) -> saveStudy(old.id(), null)).show());
+        AlertDialog editor = builder.create();
+        editor.show();
+        editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button -> {
+            if (value(title).isEmpty()) { title.setError("请填写标题"); return; }
+            StudyItems.Item item = StudyItems.edited(old, exam, value(title), date[0], time[0], value(course),
+                value(place), value(notes), STUDY_LEADS[leadIndex[0]], System.currentTimeMillis());
+            if (saveStudy(item.id(), item)) {
+                editor.dismiss();
+                if (!item.done() && item.alarm() > System.currentTimeMillis()
+                    && !ScheduleAlarm.notificationsAllowed(this, StudyItems.CHANNEL)) requestNotifications(StudyItems.CHANNEL);
+            }
+        });
+    }
+
+    private boolean saveStudy(String id, StudyItems.Item item) {
+        if (!StudyItems.save(this, id, item)) { toast("保存失败，请重试"); return false; }
+        render(true);
+        return true;
     }
 
     private void addOutlook(LinearLayout parent, String heading, WeatherForecast.Outlook forecast) {
@@ -818,6 +1136,10 @@ public final class MainActivity extends Activity {
         add(date, action("修改第 1 周起始日", PALE_BLUE, BLUE,
             () -> chooseMonday(table.start, selected -> saveTable(table.withStart(selected), false))), 0, 6, 41);
         add(date, action("编辑常规节次时间", GROUND, BLUE, this::editPeriods), 0, 5, 41);
+        add(date, action("查看临时调整", GROUND, BLUE, this::showAdjustments), 0, 5, 41);
+        if (ScheduleStore.previous(this) != null) {
+            add(date, action("恢复上一次课表", PALE_BLUE, BLUE, this::restoreTimetable), 0, 5, 41);
+        }
         add(date, text("湖光校区广学楼、明德楼按错峰时间上课，第 3–4 节 10:05–11:35，第 7–8 节 16:25–17:55。", 13, MUTED, false), 3, 6);
         add(date, action("查看学校校历", GROUND, BLUE, () -> openWeb(CALENDAR)), 0, 0, 41);
         add(body, date, 0, 12);
@@ -1065,7 +1387,7 @@ public final class MainActivity extends Activity {
                     + meeting.course().name() + " · " + meeting.course().roomLabel(), 14, MUTED, false), 0, 8);
             }
         }
-        add(layout, text("确认后将替换当前课表。", 13, MUTED, false), 1, 0);
+        add(layout, text("导入后可在上课设置恢复上一次课表。", 13, MUTED, false), 1, 0);
         ScrollView preview = new ScrollView(this);
         preview.addView(layout);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("确认导入 PDF").setView(preview)
@@ -1077,7 +1399,7 @@ public final class MainActivity extends Activity {
     }
 
     private void saveTable(Timetable parsed, boolean fromPdf) {
-        if (!ScheduleStore.save(this, parsed)) { toast("保存失败，请重试"); return; }
+        if (!ScheduleStore.replace(this, parsed, table)) { toast("保存失败，请重试"); return; }
         table = parsed;
         if (fromPdf) {
             importedUri = null;

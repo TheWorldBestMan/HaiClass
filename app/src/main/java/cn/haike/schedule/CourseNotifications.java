@@ -20,6 +20,8 @@ final class CourseNotifications {
     static final String TOMORROW_CHANNEL = "tomorrow_schedule";
     static final String COURSE_TIME = "course_time";
     static final String COURSE_NAME = "course_name";
+    static final String COURSE_ID = "course_id";
+    static final String COURSE_KEY = "course_key";
     static final long COUNTDOWN_WINDOW = 60 * 60_000L;
     private static final String NEXT_ENABLED = "live_next_enabled";
     private static final String TOMORROW_ENABLED = "tomorrow_enabled";
@@ -197,15 +199,15 @@ final class CourseNotifications {
         return false;
     }
 
-    private static PendingIntent open(Context context, LocalDate date, Timetable.Meeting meeting, int id) {
+    static PendingIntent open(Context context, LocalDate date, Timetable.Meeting meeting, int id) {
         Uri.Builder target = new Uri.Builder().scheme("haiclass").authority("notification");
         target.appendPath(meeting == null ? "day" : "lesson").appendPath(date.toString());
         Intent intent = new Intent(context, MainActivity.class).setAction(ScheduleWidget.OPEN_DAY)
             .setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(ScheduleWidget.DATE, date.toEpochDay());
         if (meeting != null) {
-            target.appendPath(Long.toString(meeting.startsAt())).appendPath(meeting.course().name());
-            intent.putExtra(COURSE_TIME, meeting.startsAt()).putExtra(COURSE_NAME, meeting.course().name());
+            target.appendPath(Long.toString(meeting.startsAt())).appendPath(meeting.id());
+            intent.putExtra(COURSE_TIME, meeting.startsAt()).putExtra(COURSE_ID, meeting.id());
         }
         intent.setData(target.build());
         return PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE);

@@ -9,10 +9,14 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.UUID;
 
 final class Timetable {
     static final ZoneId CAMPUS = ZoneId.of("Asia/Shanghai");
@@ -27,6 +31,7 @@ final class Timetable {
     record Course(String name, int day, int first, int last, long weeks, String campus,
                   String room, String teacher, String type) {
         String periodLabel() {
+            if (first == 0) return "自定义时间";
             return first == last ? "第 " + first + " 节" : "第 " + first + "–" + last + " 节";
         }
 
@@ -38,26 +43,55 @@ final class Timetable {
         }
     }
 
-    record Meeting(Course course, LocalDate date, int start, int end) {
+    record Meeting(Course course, LocalDate date, int start, int end, String id) {
         long startsAt() { return epoch(date, start); }
         long endsAt() { return epoch(date, end); }
         String times() { return clock(start) + "–" + clock(end); }
+        String notificationKey() { return id + "|" + startsAt() + "|" + end + "|" + course.campus + "|" + course.room; }
+    }
+
+    record Adjustment(LocalDate source, Meeting meeting, boolean cancelled) {
+        String label() { return cancelled ? "停课" : source == null ? "补课" : "调课"; }
     }
 
     final String term;
     final LocalDate start;
     final boolean imported;
     final List<Course> courses;
+    final List<Adjustment> adjustments;
 
     Timetable(String term, LocalDate start, boolean imported, List<Course> courses) {
+        this(term, start, imported, courses, Collections.emptyList());
+    }
+
+    private Timetable(String term, LocalDate start, boolean imported, List<Course> courses, List<Adjustment> adjustments) {
         this.term = term;
         this.start = start;
         this.imported = imported;
         this.courses = Collections.unmodifiableList(new ArrayList<>(courses));
+        this.adjustments = Collections.unmodifiableList(new ArrayList<>(adjustments));
     }
 
     Timetable withStart(LocalDate value) {
-        return new Timetable(term, value, imported, courses);
+        Timetable shifted = new Timetable(term, value, imported, courses);
+        List<Adjustment> retained = new ArrayList<>();
+        for (Adjustment adjustment : adjustments) {
+            if (adjustment.source == null || shifted.baseOn(adjustment.source, STANDARD).stream()
+                .anyMatch(meeting -> meeting.id.equals(adjustment.meeting.id))) retained.add(adjustment);
+        }
+        return new Timetable(term, value, imported, courses, retained);
+    }
+
+    Adjustment adjustment(String id) {
+        for (Adjustment value : adjustments) if (value.meeting.id.equals(id)) return value;
+        return null;
+    }
+
+    Timetable withAdjustment(String id, Adjustment replacement) {
+        List<Adjustment> values = new ArrayList<>(adjustments);
+        values.removeIf(adjustment -> adjustment.meeting.id.equals(id));
+        if (replacement != null) values.add(replacement);
+        return new Timetable(term, start, imported, courses, values);
     }
 
     static LocalDate today() { return onDate(System.currentTimeMillis()); }
@@ -80,6 +114,25 @@ final class Timetable {
     }
 
     List<Meeting> on(LocalDate date, int[][] periods) {
+        List<Meeting> result = baseOn(date, periods);
+        for (Adjustment adjustment : adjustments) {
+            Meeting meeting = adjustment.meeting;
+            if (date.equals(adjustment.source)) result.removeIf(original -> original.id.equals(meeting.id));
+            if (!adjustment.cancelled && date.equals(meeting.date)) result.add(meeting);
+        }
+        result.sort(Comparator.comparingInt(Meeting::start).thenComparing(Meeting::id));
+        return result;
+    }
+
+    Meeting find(long start, String id, int[][] periods) {
+        if (id == null) return null;
+        for (Meeting meeting : on(onDate(start), periods)) {
+            if (meeting.startsAt() == start && meeting.id.equals(id)) return meeting;
+        }
+        return null;
+    }
+
+    private List<Meeting> baseOn(LocalDate date, int[][] periods) {
         int week = week(date);
         List<Meeting> result = new ArrayList<>();
         if (week < 1 || week > 40) return result;
@@ -91,10 +144,13 @@ final class Timetable {
                 begins = staggeredStart(course.first, begins);
                 ends = staggeredEnd(course.last, ends);
             }
-            result.add(new Meeting(course, date, begins, ends));
+            result.add(new Meeting(course, date, begins, ends, meetingId(course, date)));
         }
-        result.sort(Comparator.comparingInt(Meeting::start));
         return result;
+    }
+
+    private static String meetingId(Course c, LocalDate date) {
+        return UUID.nameUUIDFromBytes((date + "\n" + c).getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private static int staggeredStart(int period, int standard) {
@@ -123,7 +179,16 @@ final class Timetable {
         return week;
     }
 
-    LocalDate lastDay() { return start.plusDays(lastWeek() * 7L - 1); }
+    Set<LocalDate> datesFrom(LocalDate first) {
+        Set<LocalDate> dates = new TreeSet<>();
+        LocalDate begin = first.isAfter(start) ? first : start;
+        LocalDate lastBase = start.plusDays(lastWeek() * 7L - 1);
+        for (LocalDate date = begin; !date.isAfter(lastBase); date = date.plusDays(1)) dates.add(date);
+        for (Adjustment value : adjustments) {
+            if (!value.cancelled && !value.meeting.date.isBefore(first)) dates.add(value.meeting.date);
+        }
+        return dates;
+    }
 
     Meeting next(long now, int[][] periods) {
         return nextMeeting(now, periods, true);
@@ -134,10 +199,7 @@ final class Timetable {
     }
 
     private Meeting nextMeeting(long now, int[][] periods, boolean includeOngoing) {
-        LocalDate day = onDate(now);
-        if (day.isBefore(start)) day = start;
-        LocalDate last = lastDay();
-        for (; !day.isAfter(last); day = day.plusDays(1)) {
+        for (LocalDate day : datesFrom(onDate(now))) {
             for (Meeting meeting : on(day, periods)) {
                 if ((includeOngoing ? meeting.endsAt() : meeting.startsAt()) > now) return meeting;
             }
@@ -161,12 +223,27 @@ final class Timetable {
     JSONObject json() throws JSONException {
         JSONObject root = new JSONObject().put("term", term).put("termStart", start.toString()).put("imported", imported);
         JSONArray entries = new JSONArray();
-        for (Course c : courses) {
-            entries.put(new JSONObject().put("name", c.name).put("day", c.day).put("first", c.first)
-                .put("last", c.last).put("mask", c.weeks).put("campus", c.campus).put("room", c.room)
-                .put("teacher", c.teacher).put("type", c.type));
+        for (Course c : courses) entries.put(courseJson(c));
+        JSONArray changes = new JSONArray();
+        for (Adjustment value : adjustments) {
+            Meeting m = value.meeting;
+            changes.put(new JSONObject().put("id", m.id).put("source", value.source == null ? "" : value.source.toString())
+                .put("date", m.date.toString()).put("start", m.start).put("end", m.end)
+                .put("cancelled", value.cancelled).put("course", courseJson(m.course)));
         }
-        return root.put("courses", entries);
+        return root.put("courses", entries).put("adjustments", changes);
+    }
+
+    private static JSONObject courseJson(Course c) throws JSONException {
+        return new JSONObject().put("name", c.name).put("day", c.day).put("first", c.first)
+            .put("last", c.last).put("mask", c.weeks).put("campus", c.campus).put("room", c.room)
+            .put("teacher", c.teacher).put("type", c.type);
+    }
+
+    private static Course readCourse(JSONObject c, long mask) throws JSONException {
+        return new Course(c.getString("name"), c.getInt("day"), c.getInt("first"),
+            c.getInt("last"), mask, c.optString("campus"), c.optString("room"),
+            c.optString("teacher"), c.optString("type"));
     }
 
     static Timetable from(JSONObject root) throws JSONException {
@@ -181,11 +258,28 @@ final class Timetable {
                     if (parity.isEmpty() || parity.equals(week % 2 == 0 ? "even" : "odd")) mask |= 1L << week;
                 }
             }
-            courses.add(new Course(c.getString("name"), c.getInt("day"), c.getInt("first"),
-                c.getInt("last"), mask, c.optString("campus"), c.optString("room"),
-                c.optString("teacher"), c.optString("type")));
+            Course course = readCourse(c, mask);
+            if (course.first >= 1 && course.last >= course.first && course.last <= STANDARD.length
+                && course.day >= 1 && course.day <= 7) courses.add(course);
+        }
+        List<Adjustment> adjustments = new ArrayList<>();
+        JSONArray changes = root.optJSONArray("adjustments");
+        for (int i = 0; changes != null && i < changes.length(); i++) {
+            try {
+                JSONObject entry = changes.getJSONObject(i);
+                JSONObject course = entry.getJSONObject("course");
+                String source = entry.optString("source");
+                Meeting meeting = new Meeting(readCourse(course, course.optLong("mask")), LocalDate.parse(entry.getString("date")),
+                    entry.getInt("start"), entry.getInt("end"), entry.getString("id"));
+                if (meeting.start >= 0 && meeting.end > meeting.start && meeting.end < 1440) {
+                    adjustments.add(new Adjustment(source.isEmpty() ? null : LocalDate.parse(source),
+                        meeting, entry.optBoolean("cancelled")));
+                }
+            } catch (JSONException | java.time.DateTimeException invalid) {
+                // Keep the underlying timetable available if an adjustment cannot be read.
+            }
         }
         return new Timetable(root.optString("term", "模拟课表"), LocalDate.parse(root.getString("termStart")),
-            root.optBoolean("imported"), courses);
+            root.optBoolean("imported"), courses, adjustments);
     }
 }

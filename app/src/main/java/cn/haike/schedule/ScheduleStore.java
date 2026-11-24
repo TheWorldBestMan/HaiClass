@@ -13,6 +13,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 final class ScheduleStore {
+    private static final String TABLE = "timetable";
+    private static final String PREVIOUS = "previous_timetable";
     private ScheduleStore() {}
 
     static SharedPreferences prefs(Context context) {
@@ -21,7 +23,7 @@ final class ScheduleStore {
 
     static Timetable load(Context context) {
         try {
-            String saved = prefs(context).getString("timetable", null);
+            String saved = prefs(context).getString(TABLE, null);
             return saved == null ? demo(context) : Timetable.from(new JSONObject(saved));
         } catch (JSONException | RuntimeException ex) {
             return demo(context);
@@ -49,8 +51,26 @@ final class ScheduleStore {
 
     static boolean save(Context context, Timetable table) {
         try {
-            return prefs(context).edit().putString("timetable", table.json().toString()).commit();
+            return prefs(context).edit().putString(TABLE, table.json().toString()).commit();
         } catch (JSONException ex) {
+            return false;
+        }
+    }
+
+    static Timetable previous(Context context) {
+        try {
+            String saved = prefs(context).getString(PREVIOUS, null);
+            return saved == null ? null : Timetable.from(new JSONObject(saved));
+        } catch (JSONException | RuntimeException invalid) {
+            return null;
+        }
+    }
+
+    static boolean replace(Context context, Timetable updated, Timetable current) {
+        try {
+            return prefs(context).edit().putString(TABLE, updated.json().toString())
+                .putString(PREVIOUS, current.json().toString()).commit();
+        } catch (JSONException invalid) {
             return false;
         }
     }

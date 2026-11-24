@@ -130,7 +130,8 @@ public final class ScheduleWidget extends AppWidgetProvider {
                 if (index < meetings.size()) {
                     Timetable.Meeting meeting = meetings.get(index);
                     Timetable.Course course = meeting.course();
-                    String period = (course.first() == course.last() ? String.valueOf(course.first())
+                    String period = course.first() == 0 ? (course.weeks() == 0 ? "补课" : "调课")
+                        : (course.first() == course.last() ? String.valueOf(course.first())
                         : course.first() + "–" + course.last()) + "节";
                     cell.setTextViewText(R.id.widget_period, period);
                     cell.setTextViewText(R.id.widget_time, Timetable.clock(meeting.start()) + "\n" + Timetable.clock(meeting.end()));
@@ -138,7 +139,7 @@ public final class ScheduleWidget extends AppWidgetProvider {
                     cell.setTextViewText(R.id.widget_room, compactRoom(course.room()));
                     cell.setViewVisibility(R.id.widget_room, View.VISIBLE);
                     cell.setContentDescription(R.id.widget_cell, course.name() + "，" + meeting.times()
-                        + "，第" + period + "，" + course.room());
+                        + "，" + (course.first() == 0 ? period : "第" + period) + "，" + course.roomLabel());
                     cell.setOnClickFillInIntent(R.id.widget_cell, new Intent().putExtra(DATE, meeting.date().toEpochDay()));
                 } else if (index == 0) {
                     cell.setTextViewText(R.id.widget_course, "无课");

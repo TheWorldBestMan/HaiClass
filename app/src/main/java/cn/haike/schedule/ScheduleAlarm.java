@@ -11,8 +11,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Bundle;
+import android.service.notification.StatusBarNotification;
 
 import java.time.LocalDate;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 public final class ScheduleAlarm extends BroadcastReceiver {
     private static final String REMINDER = "cn.haike.schedule.COURSE_REMINDER";
@@ -22,7 +27,10 @@ public final class ScheduleAlarm extends BroadcastReceiver {
     private static final String TOMORROW = "cn.haike.schedule.TOMORROW";
     private static final String WEATHER = "cn.haike.schedule.WEATHER";
     private static final String CAMPUS_RUN = "cn.haike.schedule.CAMPUS_RUN";
+    private static final String STUDY = "cn.haike.schedule.STUDY_REMINDER";
     private static final String CHANNEL = "course_reminder";
+    private static final String DELIVERED = "course_reminders_delivered";
+    private static final int COURSE_NOTICE = 217;
     private static final long MINUTE = 60_000;
 
     static boolean enabled(Context context) { return ScheduleStore.prefs(context).getBoolean("reminders", false); }
@@ -54,9 +62,14 @@ public final class ScheduleAlarm extends BroadcastReceiver {
 
     static void refreshNotifications(Context context) {
         scheduleReminder(context);
+        refreshStudy(context);
         refreshCampusRun(context);
         refreshTomorrow(context);
         refreshWeather(context);
+    }
+
+    static void refreshStudy(Context context) {
+        set(context, STUDY, StudyItems.nextReminder(context, System.currentTimeMillis()), true);
     }
 
     static void refreshWeather(Context context) {
@@ -90,24 +103,23 @@ public final class ScheduleAlarm extends BroadcastReceiver {
     }
 
     private static void scheduleReminder(Context context) {
+        Timetable table = ScheduleStore.load(context);
+        int[][] periods = ScheduleStore.periods(context);
+        pruneCourseNotifications(context, table, periods);
         if (!enabled(context) || !notificationsAllowed(context)) {
             set(context, REMINDER, 0, true);
             return;
         }
-        Timetable table = ScheduleStore.load(context);
-        int[][] periods = ScheduleStore.periods(context);
         long now = System.currentTimeMillis();
         long leadMillis = lead(context) * MINUTE;
-        LocalDate start = Timetable.onDate(now);
-        if (start.isBefore(table.start)) start = table.start;
+        Set<String> delivered = delivered(context);
         long trigger = 0;
-        LocalDate last = table.lastDay();
-        for (LocalDate date = start; !date.isAfter(last) && trigger == 0; date = date.plusDays(1)) {
+        find:
+        for (LocalDate date : table.datesFrom(Timetable.onDate(now))) {
             for (Timetable.Meeting meeting : table.on(date, periods)) {
-                long candidate = meeting.startsAt() - leadMillis;
-                if (candidate > now) {
-                    trigger = candidate;
-                    break;
+                if (meeting.startsAt() > now && !delivered.contains(deliveryKey(meeting))) {
+                    trigger = Math.max(now + 200, meeting.startsAt() - leadMillis);
+                    break find;
                 }
             }
         }
@@ -151,8 +163,11 @@ public final class ScheduleAlarm extends BroadcastReceiver {
         if (TEST.equals(action)) {
             post(context, 100, "海课 · 测试提醒", "上课通知已开启。");
         } else if (REMINDER.equals(action)) {
-            if (enabled(context)) deliver(context, intent.getLongExtra("when", 0));
+            if (enabled(context) && notificationsAllowed(context)) deliver(context);
             scheduleReminder(context);
+        } else if (STUDY.equals(action)) {
+            StudyItems.deliver(context, System.currentTimeMillis());
+            refreshStudy(context);
         } else if (WIDGET.equals(action)) {
             ScheduleWidget.refresh(context);
             CampusRunWidget.refresh(context);
@@ -171,18 +186,58 @@ public final class ScheduleAlarm extends BroadcastReceiver {
         }
     }
 
-    private static void deliver(Context context, long trigger) {
-        if (trigger == 0) return;
-        long starts = trigger + lead(context) * MINUTE;
-        if (System.currentTimeMillis() >= starts) return;
+    private static Set<String> delivered(Context context) {
+        return ScheduleStore.prefs(context).getStringSet(DELIVERED, Collections.emptySet());
+    }
+
+    private static String deliveryKey(Timetable.Meeting meeting) {
+        return meeting.startsAt() + ":" + meeting.notificationKey();
+    }
+
+    private static void deliver(Context context) {
+        long now = System.currentTimeMillis();
+        long soon = now + lead(context) * MINUTE;
         Timetable table = ScheduleStore.load(context);
         int[][] periods = ScheduleStore.periods(context);
-        for (Timetable.Meeting meeting : table.on(Timetable.onDate(starts), periods)) {
-            if (meeting.startsAt() == starts) {
-                post(context, 1000 + meeting.hashCode() % 500_000_000, meeting.course().name(),
-                    meeting.times() + " · " + meeting.course().roomLabel());
+        Set<String> sent = new HashSet<>(delivered(context));
+        sent.removeIf(key -> Long.parseLong(key.substring(0, key.indexOf(':'))) <= now);
+        long last = Timetable.onDate(soon).toEpochDay();
+        for (LocalDate date : table.datesFrom(Timetable.onDate(now))) {
+            if (date.toEpochDay() > last) break;
+            for (Timetable.Meeting meeting : table.on(date, periods)) {
+                long start = meeting.startsAt();
+                if (start <= now || start > soon || !sent.add(deliveryKey(meeting))) continue;
+                postCourse(context, meeting, now);
             }
         }
+        ScheduleStore.prefs(context).edit().putStringSet(DELIVERED, sent).apply();
+    }
+
+    private static void pruneCourseNotifications(Context context, Timetable table, int[][] periods) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        for (StatusBarNotification notice : manager.getActiveNotifications()) {
+            if (!CHANNEL.equals(notice.getNotification().getChannelId()) || notice.getId() == 100) continue;
+            Bundle extras = notice.getNotification().extras;
+            Timetable.Meeting current = table.find(extras.getLong(CourseNotifications.COURSE_TIME),
+                extras.getString(CourseNotifications.COURSE_ID), periods);
+            if (!enabled(context) || current == null || !current.notificationKey().equals(extras.getString(CourseNotifications.COURSE_KEY))) {
+                manager.cancel(notice.getTag(), notice.getId());
+            }
+        }
+    }
+
+    private static void postCourse(Context context, Timetable.Meeting meeting, long now) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        manager.createNotificationChannel(new NotificationChannel(CHANNEL, "上课提醒", NotificationManager.IMPORTANCE_HIGH));
+        Bundle extras = new Bundle();
+        extras.putLong(CourseNotifications.COURSE_TIME, meeting.startsAt());
+        extras.putString(CourseNotifications.COURSE_ID, meeting.id());
+        extras.putString(CourseNotifications.COURSE_KEY, meeting.notificationKey());
+        manager.notify(meeting.id(), COURSE_NOTICE, new Notification.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_notification).setContentTitle(meeting.course().name())
+            .setContentText(meeting.times() + " · " + meeting.course().roomLabel()).addExtras(extras)
+            .setContentIntent(CourseNotifications.open(context, meeting.date(), meeting, COURSE_NOTICE))
+            .setAutoCancel(true).setTimeoutAfter(meeting.endsAt() - now).build());
     }
 
     private static void post(Context context, int id, String title, String text) {

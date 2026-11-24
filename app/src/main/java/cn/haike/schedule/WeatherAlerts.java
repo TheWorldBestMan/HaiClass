@@ -13,6 +13,7 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.service.notification.StatusBarNotification;
 
 import java.time.LocalDate;
@@ -89,15 +90,27 @@ final class WeatherAlerts {
         }
         NotificationManager notifications = context.getSystemService(NotificationManager.class);
         if (!allowed(context, Feature.MORNING)) notifications.cancel(WEATHER_ID);
-        if (!allowed(context, Feature.BEFORE_CLASS)) {
-            notifications.cancel(CLASS_ID);
-            for (StatusBarNotification alert : notifications.getActiveNotifications()) {
-                if (alert.getId() == CLASS_ID && CLASS_CHANNEL.equals(alert.getNotification().getChannelId())) {
-                    notifications.cancel(alert.getTag(), CLASS_ID);
-                }
+        pruneClassNotifications(context, notifications);
+        return checks.wake == NEVER ? 0 : checks.wake;
+    }
+
+    private static void pruneClassNotifications(Context context, NotificationManager manager) {
+        boolean enabled = allowed(context, Feature.BEFORE_CLASS);
+        Timetable table = null;
+        int[][] periods = null;
+        for (StatusBarNotification alert : manager.getActiveNotifications()) {
+            if (!CLASS_CHANNEL.equals(alert.getNotification().getChannelId())) continue;
+            if (table == null && enabled) {
+                table = ScheduleStore.load(context);
+                periods = ScheduleStore.periods(context);
+            }
+            Bundle extras = alert.getNotification().extras;
+            Timetable.Meeting meeting = table == null ? null : table.find(extras.getLong(CLASS_START),
+                extras.getString(CourseNotifications.COURSE_ID), periods);
+            if (meeting == null || !classKey(context, meeting).equals(alert.getTag())) {
+                manager.cancel(alert.getTag(), alert.getId());
             }
         }
-        return checks.wake == NEVER ? 0 : checks.wake;
     }
 
     static Set<WeatherForecast.Campus> dueCampuses(Context context) {
@@ -141,10 +154,8 @@ final class WeatherAlerts {
             Timetable table = ScheduleStore.load(context);
             int[][] periods = ScheduleStore.periods(context);
             Set<String> sent = ScheduleStore.prefs(context).getStringSet(SENT_CLASSES, Collections.emptySet());
-            LocalDate first = today.isBefore(table.start) ? table.start : today;
-            LocalDate finalDay = table.lastDay();
             findClasses:
-            for (LocalDate date = first; !date.isAfter(finalDay); date = date.plusDays(1)) {
+            for (LocalDate date : table.datesFrom(today)) {
                 for (Timetable.Meeting meeting : table.on(date, periods)) {
                     long starts = meeting.startsAt();
                     if (starts <= now || sent.contains(classKey(context, meeting))) continue;
@@ -242,7 +253,8 @@ final class WeatherAlerts {
     }
 
     private static String classKey(Context context, Timetable.Meeting meeting) {
-        return meeting.startsAt() + "|" + WeatherForecast.classCampus(context, meeting).name();
+        return meeting.startsAt() + "|" + WeatherForecast.classCampus(context, meeting).name()
+            + "|" + meeting.notificationKey();
     }
 
     private static boolean recent(String key, long now) {
@@ -284,15 +296,19 @@ final class WeatherAlerts {
             .putExtra(ScheduleWidget.DATE, meeting.date().toEpochDay())
             .putExtra(WEATHER_CAMPUS, window.campus().name())
             .putExtra(CLASS_START, start)
-            .putExtra(CLASS_NAME, meeting.course().name());
+            .putExtra(CourseNotifications.COURSE_ID, meeting.id());
         PendingIntent open = PendingIntent.getActivity(context, CLASS_ID, day,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Bundle extras = new Bundle();
+        extras.putLong(CLASS_START, start);
+        extras.putString(CourseNotifications.COURSE_ID, meeting.id());
         manager.notify(key, CLASS_ID, new Notification.Builder(context, CLASS_CHANNEL)
             .setSmallIcon(R.drawable.ic_weather)
             .setContentTitle("课前天气 · " + meeting.course().name())
             .setContentText(tips.isEmpty() ? line : line + " · " + tips.get(0))
             .setStyle(new Notification.BigTextStyle().bigText(detail))
             .setContentIntent(open)
+            .addExtras(extras)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)

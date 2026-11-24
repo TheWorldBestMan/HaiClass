@@ -21,7 +21,7 @@ final class CampusRun {
     private static final String ENABLED = "campus_run_enabled";
     private static final String COUNT_ADJUSTMENT = "campus_run_count_adjustment";
     private static final int NOON = 12 * 60;
-    private static final int NOTIFICATION_ID = 213;
+    private static final int NOTIFICATION_ID = 216;
     private static final long LEAD = 30 * 60_000L;
 
     enum Window {
@@ -106,10 +106,7 @@ final class CampusRun {
         Timetable table = ScheduleStore.load(context);
         int[][] periods = ScheduleStore.periods(context);
         SharedPreferences prefs = ScheduleStore.prefs(context);
-        LocalDate first = Timetable.onDate(now);
-        if (first.isBefore(table.start)) first = table.start;
-        LocalDate last = table.lastDay();
-        for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+        for (LocalDate day : table.datesFrom(Timetable.onDate(now))) {
             for (Timetable.Meeting meeting : table.on(day, periods)) {
                 long reminder = meeting.startsAt() - LEAD;
                 if (reminder > now && canRemindAt(prefs, reminder)) return reminder;
